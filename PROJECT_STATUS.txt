@@ -1,0 +1,746 @@
+================================================================================
+  ROOM MAPPING ROBOT — PROJECT STATUS & DOCUMENTATION
+  Repository : https://github.com/Am4l-babu/room-mapping.git
+  Last Updated: March 12, 2026
+================================================================================
+
+--------------------------------------------------------------------------------
+  TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+  1.  Project Overview
+  2.  System Requirements
+  3.  Repository Structure
+  4.  Hardware / Robot Specs
+  5.  Software Stack
+  6.  How It Works (Full Pipeline)
+  7.  Configuration Files
+  8.  Launch Files
+  9.  How to Run (Step-by-Step)
+  10. Autonomous Explorer Details
+  11. ESP32 Firmware
+  12. Bugs Fixed (Session Log)
+  13. Known Issues & Limitations
+  14. Next Steps / TODO
+  15. Git History
+  16. Useful Commands (Quick Reference)
+
+--------------------------------------------------------------------------------
+  1. PROJECT OVERVIEW
+--------------------------------------------------------------------------------
+This project implements a fully autonomous room-mapping robot using:
+  - ROS2 Jazzy (Robot Operating System 2)
+  - Gazebo Harmonic (physics simulation)
+  - SLAM Toolbox (Simultaneous Localization and Mapping)
+  - Nav2 (Navigation Stack 2)
+  - Frontier-based autonomous exploration algorithm
+
+The robot starts in an unknown room, builds a map using its LiDAR sensor,
+and autonomously navigates to unexplored frontiers until the entire room is
+mapped. The same codebase works for both simulation AND a real ESP32-based
+physical robot.
+
+Goal: Fully autonomous room mapping with zero human intervention.
+
+--------------------------------------------------------------------------------
+  2. SYSTEM REQUIREMENTS
+--------------------------------------------------------------------------------
+  OS          : Ubuntu 24.04 LTS
+  ROS2        : Jazzy Jalisco  (/opt/ros/jazzy/)
+  Gazebo      : Harmonic (gz-sim 8.x)
+  Python      : 3.12.3
+  Workspace   : /home/ros/mapping robot/ros2_room_mapping_ws/
+  Git Remote  : https://github.com/Am4l-babu/room-mapping.git
+
+  Required ROS2 packages:
+    - ros-jazzy-slam-toolbox
+    - ros-jazzy-nav2-*  (full nav2 suite)
+    - ros-jazzy-ros-gz-bridge
+    - ros-jazzy-ros-gz-sim
+    - ros-jazzy-robot-state-publisher
+    - ros-jazzy-joint-state-publisher
+
+  ESP32 Firmware (optional, for real robot):
+    - PlatformIO
+    - micro-ROS Arduino library
+    - WiFi-capable ESP32 board
+
+--------------------------------------------------------------------------------
+  3. REPOSITORY STRUCTURE
+--------------------------------------------------------------------------------
+  ros2_room_mapping_ws/
+  ├── src/
+  │   └── room_mapping_robot/
+  │       ├── package.xml                    # ROS2 package manifest
+  │       ├── CMakeLists.txt                 # Build configuration
+  │       ├── config/
+  │       │   ├── nav2_params.yaml           # Nav2 full stack parameters
+  │       │   └── slam_params.yaml           # SLAM Toolbox parameters
+  │       ├── launch/
+  │       │   ├── gazebo_launch.py           # Start Gazebo + robot + bridges
+  │       │   ├── navigation_launch.py       # Start SLAM + Nav2 + RViz
+  │       │   ├── slam_launch.py             # SLAM only (standalone)
+  │       │   └── spawn_robot.launch.py      # Spawn robot into Gazebo
+  │       ├── scripts/
+  │       │   ├── autonomous_explorer.py     # *** MAIN EXPLORATION NODE ***
+  │       │   └── teleop_helper.py           # Keyboard teleoperation
+  │       ├── urdf/
+  │       │   └── robot.urdf.xacro           # Robot URDF model (xacro)
+  │       ├── worlds/
+  │       │   └── room.world                 # Gazebo room environment
+  │       └── rviz/
+  │           ├── mapping.rviz               # RViz config for SLAM only
+  │           └── nav2_rviz.rviz             # RViz config for Nav2
+  ├── esp32_firmware/
+  │   ├── platformio.ini                     # PlatformIO build config
+  │   ├── include/
+  │   │   └── config.h                       # WiFi, ROS agent IP, pin config
+  │   └── src/
+  │       └── main.cpp                       # ESP32 micro-ROS firmware
+  ├── install/                               # colcon build output (git-ignored)
+  ├── build/                                 # colcon build artifacts (git-ignored)
+  └── PROJECT_STATUS.txt                     # THIS FILE
+
+--------------------------------------------------------------------------------
+  4. HARDWARE / ROBOT SPECS
+--------------------------------------------------------------------------------
+  Chassis      : Differential drive (2-wheel)
+  Dimensions   : 0.18m (length) x 0.14m (width) x ~0.15m (height)
+  Wheel radius : 0.03m (3cm)
+  Wheel separation: 0.16m (16cm)
+  Max speed    : 0.15 m/s linear, 0.5 rad/s angular
+  Sensors      :
+    - LiDAR   : 360° 2D laser scan, range 0.1–8.0m, 360 samples/rev
+    - IMU      : 6-DOF (accel + gyro) on ESP32
+    - Encoders : Via motor PWM feedback (differential odometry)
+  Controller   : ESP32 (dual-core 240MHz, WiFi)
+  Communication: micro-ROS over WiFi UDP (micro-ROS agent on host PC)
+  Power        : 7.4V LiPo battery
+
+  URDF Joints / Links:
+    base_footprint → base_link (fixed)
+    base_link → left_wheel (continuous)
+    base_link → right_wheel (continuous)
+    base_link → lidar_link (fixed)
+    base_link → imu_link (fixed)
+
+  Gazebo Plugins:
+    - diff_drive        : Publishes /odom, subscribes /cmd_vel
+    - lidar             : Publishes /scan (GPU ray)
+    - imu               : Publishes /imu/data
+    - joint_state       : Publishes /joint_states
+
+--------------------------------------------------------------------------------
+  5. SOFTWARE STACK
+--------------------------------------------------------------------------------
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                        FULL PIPELINE                                    │
+  │                                                                         │
+  │  Gazebo Harmonic                                                        │
+  │  ┌──────────────┐    ros_gz_bridge (7 topics)                          │
+  │  │  Room World  │◄──────────────────────────────────────────────────┐  │
+  │  │  Robot URDF  │                                                    │  │
+  │  │  diff_drive  │──/odom──►  SLAM Toolbox  ──/map──►               │  │
+  │  │  lidar       │──/scan──►  (async_slam_  ──/tf(map→odom)──►       │  │
+  │  │  imu         │──/imu──►   toolbox_node)                          │  │
+  │  └──────────────┘                                                    │  │
+  │         ▲                                                             │  │
+  │         │ /cmd_vel                                                    │  │
+  │         │                                                             │  │
+  │  Nav2 Stack                                                           │  │
+  │  ┌─────────────┐   ┌─────────────┐   ┌──────────────┐               │  │
+  │  │ bt_navigator│──►│planner_srvr │──►│controller_srv│───────────────┘  │
+  │  │ (BT         │   │ (NavFn/A*)  │   │ (DWB local   │                  │
+  │  │  orchestrate│   │ global path │   │  controller) │                  │
+  │  └─────────────┘   └─────────────┘   └──────────────┘                  │
+  │         ▲                                                                │
+  │         │ NavigateToPose action                                          │
+  │         │                                                                │
+  │  autonomous_explorer.py                                                  │
+  │  ┌──────────────────────────────────────────────────────────────────┐   │
+  │  │  /map ──► find_frontiers() ──► select_best_frontier()           │   │
+  │  │        ──► send_nav_goal(x,y) ──► Nav2 NavigateToPose           │   │
+  │  │        ──► on success: repeat │ on fail: blacklist & skip       │   │
+  │  └──────────────────────────────────────────────────────────────────┘   │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+  ROS2 Topics (key):
+    /scan          : sensor_msgs/LaserScan       (LiDAR → SLAM + Nav2)
+    /odom          : nav_msgs/Odometry           (Gazebo → Nav2 + Explorer)
+    /map           : nav_msgs/OccupancyGrid      (SLAM → Nav2 + Explorer)
+    /cmd_vel       : geometry_msgs/Twist         (Nav2 → Gazebo)
+    /tf            : tf2_msgs/TFMessage          (SLAM: map→odom, robot→odom)
+    /imu/data      : sensor_msgs/Imu             (Gazebo → bridge)
+    /joint_states  : sensor_msgs/JointState      (Gazebo → bridge)
+    /clock         : rosgraph_msgs/Clock         (Gazebo sim time)
+
+  ROS2 Actions:
+    /navigate_to_pose  : nav2_msgs/action/NavigateToPose  (Explorer → Nav2)
+
+  Lifecycle Nodes:
+    /slam_toolbox         (configure + activate manually — sim_time race fix)
+    /bt_navigator         (managed by lifecycle_manager_navigation)
+    /controller_server    (managed by lifecycle_manager_navigation)
+    /planner_server       (managed by lifecycle_manager_navigation)
+    /behavior_server      (managed by lifecycle_manager_navigation)
+    /waypoint_follower    (managed by lifecycle_manager_navigation)
+    /velocity_smoother    (managed by lifecycle_manager_navigation)
+
+--------------------------------------------------------------------------------
+  6. HOW IT WORKS (FULL PIPELINE)
+--------------------------------------------------------------------------------
+
+  STEP 1 — Gazebo Simulation Startup
+    gazebo_launch.py starts:
+      - gz sim room.world (Gazebo Harmonic server + GUI)
+      - robot_state_publisher (publishes /tf from URDF)
+      - ros_gz_bridge (7 bidirectional topic bridges between ROS2 and Gazebo)
+      - Spawns robot at position (1.0, 1.0, 0.0) in the room world
+
+  STEP 2 — SLAM Toolbox
+    async_slam_toolbox_node starts as a ROS2 lifecycle node.
+    IMPORTANT: Due to a sim_time race condition at startup, SLAM must be
+    manually activated:
+      ros2 lifecycle set /slam_toolbox configure
+      ros2 lifecycle set /slam_toolbox activate
+    Once active, SLAM:
+      - Subscribes to /scan (LiDAR data)
+      - Subscribes to /tf (odom→base_footprint transform from diff_drive)
+      - Publishes /map (OccupancyGrid, updated continuously)
+      - Publishes /tf (map→odom transform — this is the localization!)
+
+  STEP 3 — Nav2 Stack
+    navigation_launch.py starts with TimerAction delays:
+      - 5s  : Nav2 nodes start (controller, planner, behavior, bt_navigator...)
+      - 15s : lifecycle_manager_navigation starts (manages node states)
+    The lifecycle_manager configures and activates all Nav2 nodes in sequence.
+    Total startup time: ~45 seconds from launch.
+
+    Nav2 Components:
+      - Global Costmap: Full map from SLAM + obstacle inflation (0.12m radius)
+      - Local Costmap : 2m×2m rolling window around robot
+      - NavFn Planner : Dijkstra pathfinding on global costmap
+      - DWB Controller: Dynamic window velocity selection (local obstacle avoid)
+      - BT Navigator  : Behavior tree orchestrating plan→follow→recover cycle
+      - Behavior Server: Spin-in-place, backup recovery actions
+
+  STEP 4 — Autonomous Explorer
+    autonomous_explorer.py runs the frontier exploration loop:
+      Every 2 seconds:
+        1. Read /map → find all frontier cells (free adjacent to unknown)
+        2. Cluster frontiers with BFS
+        3. Filter clusters by size (min 3 cells) and distance (0.3–3.0m)
+        4. Skip blacklisted goals (previously failed, 0.5m radius)
+        5. Score candidates: score = cluster_size / distance
+        6. Pick highest score → nudge 0.3m toward robot (avoids wall zone)
+        7. Send NavigateToPose goal to Nav2
+        8. On SUCCESS: loop again (new frontiers found)
+        9. On ABORT  : blacklist goal, pick next frontier
+       10. On NO FRONTIERS: exploration complete! Save the map.
+
+  STEP 5 — Map Saving (when complete)
+    ros2 run nav2_map_server map_saver_cli -f ~/room_map
+    Saves: ~/room_map.pgm (image) + ~/room_map.yaml (metadata)
+
+--------------------------------------------------------------------------------
+  7. CONFIGURATION FILES
+--------------------------------------------------------------------------------
+
+  config/slam_params.yaml
+  -----------------------
+  Key parameters:
+    use_sim_time: true
+    use_lifecycle_manager: false    # Node self-manages (fixes startup race)
+    mode: mapping
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_footprint
+    scan_topic: /scan
+    map_update_interval: 2.0
+    resolution: 0.025               # 2.5cm map resolution
+    max_laser_range: 8.0
+
+  config/nav2_params.yaml
+  -----------------------
+  Key parameters:
+    bt_navigator:
+      global_frame: map
+      robot_base_frame: base_footprint
+      action_server_result_timeout: 900.0
+
+    controller_server (DWB):
+      max_vel_x: 0.15               # 0.15 m/s max speed
+      max_vel_theta: 0.5            # 0.5 rad/s max rotation
+      transform_tolerance: 1.0     # [FIXED] was 0.5 — fixes TF extrapolation
+      sim_time: 1.5                 # Trajectory lookahead
+      progress_checker:
+        required_movement_radius: 0.05  # Must move 5cm in 10s
+        movement_time_allowance: 10.0
+
+    planner_server (NavFn):
+      tolerance: 1.0               # [FIXED] was 0.5 — allows planning near walls
+      use_astar: false             # Dijkstra (more robust)
+      allow_unknown: true          # Plan through unexplored space
+
+    local_costmap:
+      width: 2, height: 2          # 2m×2m rolling window
+      resolution: 0.025
+      inflation_radius: 0.12
+      cost_scaling_factor: 3.0
+
+    global_costmap:
+      resolution: 0.05
+      track_unknown_space: true
+      inflation_radius: 0.12
+      cost_scaling_factor: 3.0
+
+    behavior_server:
+      transform_tolerance: 1.0    # [FIXED] was 0.5
+
+--------------------------------------------------------------------------------
+  8. LAUNCH FILES
+--------------------------------------------------------------------------------
+
+  gazebo_launch.py
+    Starts: Gazebo Harmonic, robot_state_publisher, ros_gz_bridge, robot spawn
+    Run with: ros2 launch room_mapping_robot gazebo_launch.py
+
+  navigation_launch.py  [MODIFIED in this session]
+    Starts: SLAM Toolbox, all Nav2 nodes, RViz
+    Key changes:
+      - TimerAction(5s)  for Nav2 nodes
+      - TimerAction(15s) for lifecycle_manager
+      - Removed respawn=True from all nodes (was causing process duplication)
+    Run with: ros2 launch room_mapping_robot navigation_launch.py
+
+  slam_launch.py
+    Starts: SLAM Toolbox only (no Nav2)
+    Run with: ros2 launch room_mapping_robot slam_launch.py
+
+  spawn_robot.launch.py
+    Spawns robot URDF into a running Gazebo instance
+
+--------------------------------------------------------------------------------
+  9. HOW TO RUN (STEP-BY-STEP)
+--------------------------------------------------------------------------------
+
+  FULL AUTONOMOUS EXPLORATION (recommended — use start_smart.sh):
+  ----------------------------------------------------------------
+  Terminal 1 — Start Gazebo:
+    cd "/home/ros/mapping robot/ros2_room_mapping_ws"
+    source /opt/ros/jazzy/setup.bash
+    source install/setup.bash
+    ros2 launch room_mapping_robot gazebo_launch.py
+
+  Wait ~10 seconds for Gazebo to fully start and clock to begin publishing.
+
+  Terminal 2 — Start SLAM (with manual activation):
+    source /opt/ros/jazzy/setup.bash
+    source "/home/ros/mapping robot/ros2_room_mapping_ws/install/setup.bash"
+    ros2 run slam_toolbox async_slam_toolbox_node --ros-args \
+      -r __node:=slam_toolbox \
+      --params-file "/home/ros/mapping robot/ros2_room_mapping_ws/install/room_mapping_robot/share/room_mapping_robot/config/slam_params.yaml"
+    # Wait 5-10 seconds, then in another terminal:
+    ros2 lifecycle set /slam_toolbox configure
+    ros2 lifecycle set /slam_toolbox activate
+    # Verify: ros2 lifecycle get /slam_toolbox  → should show "active [3]"
+
+  Terminal 3 — Start Nav2 + RViz:
+    source /opt/ros/jazzy/setup.bash
+    source "/home/ros/mapping robot/ros2_room_mapping_ws/install/setup.bash"
+    ros2 launch room_mapping_robot navigation_launch.py
+    # Wait 45 seconds for all nodes to activate
+
+  Terminal 4 — Start Autonomous Explorer:
+    source /opt/ros/jazzy/setup.bash
+    source "/home/ros/mapping robot/ros2_room_mapping_ws/install/setup.bash"
+    ros2 run room_mapping_robot autonomous_explorer.py
+
+  Monitor: Watch RViz as the map grows and the robot navigates autonomously!
+
+  AUTOMATED SCRIPT (background, no ^C interference):
+  ---------------------------------------------------
+    bash /tmp/start_smart.sh > /tmp/smart_startup.log 2>&1 &
+    tail -f /tmp/smart_startup.log    # Watch startup progress
+    tail -f /tmp/explorer.log         # Watch exploration progress
+
+  SAVE THE MAP (when exploration complete):
+  -----------------------------------------
+    source /opt/ros/jazzy/setup.bash
+    ros2 run nav2_map_server map_saver_cli -f ~/room_map
+    # Creates: ~/room_map.pgm + ~/room_map.yaml
+
+  BUILD THE PACKAGE:
+  ------------------
+    cd "/home/ros/mapping robot/ros2_room_mapping_ws"
+    source /opt/ros/jazzy/setup.bash
+    colcon build --packages-select room_mapping_robot
+    source install/setup.bash
+
+  TROUBLESHOOTING — SLAM stuck in unconfigured state:
+    ros2 lifecycle set /slam_toolbox configure
+    ros2 lifecycle set /slam_toolbox activate
+
+  TROUBLESHOOTING — Nav2 nodes not active after 45s:
+    ros2 lifecycle set /bt_navigator configure && ros2 lifecycle set /bt_navigator activate
+    ros2 lifecycle set /controller_server configure && ros2 lifecycle set /controller_server activate
+    ros2 lifecycle set /planner_server configure && ros2 lifecycle set /planner_server activate
+
+  TROUBLESHOOTING — Stale ROS2 daemon (topics not visible):
+    ros2 daemon stop && sleep 2 && ros2 daemon start
+
+--------------------------------------------------------------------------------
+  10. AUTONOMOUS EXPLORER DETAILS
+--------------------------------------------------------------------------------
+
+  File: src/room_mapping_robot/scripts/autonomous_explorer.py
+
+  Algorithm: Frontier-Based Exploration
+    A "frontier" = a FREE cell adjacent to an UNKNOWN cell on the OccupancyGrid
+    The robot systematically visits frontiers to uncover unknown space.
+
+  Parameters (tunable via ROS params):
+    min_frontier_size  : 3     (ignore clusters smaller than this)
+    max_goal_distance  : 3.0m  (only consider frontiers within this range)
+    min_goal_distance  : 0.3m  (ignore frontiers too close to robot)
+    goal_timeout       : 45.0s (abort goal if not reached in time)
+    free_threshold     : 25    (OccupancyGrid value below = free)
+    obstacle_threshold : 65    (OccupancyGrid value above = obstacle)
+    exploration_rate   : 2.0s  (how often to compute next frontier)
+
+  Key Design Decisions:
+    1. GOAL NUDGING: Frontier centroids are nudged 0.3m toward the robot.
+       Reason: Frontier boundaries sit at the free/unknown edge. Sending
+       the robot exactly to the frontier centroid often places the goal
+       inside an inflated obstacle zone. Nudging ensures the goal is
+       in clear free space.
+
+    2. BLACKLISTING: Failed goals are recorded with exact (x,y) coordinates.
+       Any future frontier within 0.5m of a blacklisted point is skipped.
+       This prevents endless retrying of unreachable goals.
+       [BUG FIXED: previously recorded robot position instead of goal position]
+
+    3. ADAPTIVE RANGE: If no candidates found within max_goal_distance,
+       the range expands by 0.5m increments up to 8.0m.
+       If range reaches 8.0m with no candidates, the oldest 50% of
+       blacklisted goals are cleared and range resets to 3.0m.
+
+    4. SCORING: score = cluster_size / (distance + 0.1)
+       Prefers: large frontiers (more unexplored area) that are close.
+
+  State Tracking:
+    failed_goals  : set of (goal_x, goal_y) tuples — blacklisted positions
+    is_navigating : bool — prevents sending new goals while one is active
+    current_goal_x/y : float — stores active goal for blacklisting on failure
+
+--------------------------------------------------------------------------------
+  11. ESP32 FIRMWARE
+--------------------------------------------------------------------------------
+
+  File: esp32_firmware/src/main.cpp
+  Config: esp32_firmware/include/config.h
+  Build: esp32_firmware/platformio.ini (PlatformIO)
+
+  Purpose: Runs on the physical robot's ESP32 microcontroller.
+  Protocol: micro-ROS over WiFi UDP (connects to micro-ROS agent on PC)
+
+  Key Features:
+    - Motor control (PWM H-bridge, left + right wheels)
+    - Differential odometry calculation (encoder-based)
+    - LiDAR data reading (UART → /scan topic)
+    - IMU reading (MPU6050 via I2C → /imu/data topic)
+    - Subscribes /cmd_vel (Twist) → converts to motor PWM
+    - Publishes /odom (Odometry) with covariance
+    - Publishes /joint_states (wheel positions/velocities)
+    - Publishes /tf (odom → base_footprint transform)
+    - WiFi auto-reconnect with ROS agent reconnect logic
+    - 50Hz control loop
+
+  Configuration (config.h):
+    WIFI_SSID         : Your WiFi network name
+    WIFI_PASSWORD     : Your WiFi password
+    ROS_AGENT_IP      : IP address of PC running micro-ROS agent
+    ROS_AGENT_PORT    : 8888 (default micro-ROS UDP port)
+    LEFT_MOTOR_IN1/2  : GPIO pins for left motor H-bridge
+    RIGHT_MOTOR_IN1/2 : GPIO pins for right motor H-bridge
+    LEFT_ENCODER_A/B  : GPIO pins for left wheel encoder
+    RIGHT_ENCODER_A/B : GPIO pins for right wheel encoder
+    LIDAR_RX_PIN      : UART RX for LiDAR data
+
+  To flash firmware:
+    cd esp32_firmware
+    pio run --target upload
+
+  To run micro-ROS agent on PC (required for real robot):
+    docker run -it --rm --net=host microros/micro-ros-agent:jazzy udp4 --port 8888
+    # OR if installed locally:
+    ros2 run micro_ros_agent micro_ros_agent udp4 --port 8888
+
+--------------------------------------------------------------------------------
+  12. BUGS FIXED (SESSION LOG)
+--------------------------------------------------------------------------------
+
+  BUG 1 — Stale ROS2 daemon [FIXED]
+    Problem : New shells couldn't see any nodes/topics from launched processes.
+    Cause   : Old daemon from previous session, stale DDS participants.
+    Fix     : ros2 daemon stop && sleep 2 && ros2 daemon start
+
+  BUG 2 — SLAM stays "unconfigured" [FIXED with workaround]
+    Problem : async_slam_toolbox_node never self-activated.
+    Cause   : Lifecycle node with use_sim_time:true has a startup race —
+              it can't self-configure until the simulation clock starts,
+              but sometimes misses the first clock messages.
+    Fix     : Added use_lifecycle_manager: false to slam_params.yaml
+              + manual lifecycle activation in startup script.
+    Status  : Working with workaround (must activate manually each restart)
+
+  BUG 3 — Nav2 lifecycle_manager aborts (planner_server timeout) [FIXED]
+    Problem : planner_server crashed during startup with TF timeout.
+    Cause   : planner_server's global_costmap waits for map→odom TF with
+              ~60s timeout. SLAM wasn't active yet → no map frame existed.
+    Fix     : TimerAction(period=15.0) for lifecycle_manager in
+              navigation_launch.py (SLAM has 15s head start to publish map).
+
+  BUG 4 — Process duplication from respawn=True [FIXED]
+    Problem : Multiple bt_navigators, planners etc. Dozens of duplicates.
+              "More than one action server for navigate_to_pose" warnings.
+              /cmd_vel had 5+ publishers.
+    Cause   : respawn=True in all Nav2 nodes in navigation_launch.py.
+              Each node restart accumulated another copy.
+    Fix     : Removed all respawn=True and respawn_delay=2.0 from
+              navigation_launch.py.
+
+  BUG 5 — Explorer keeps retrying the same unreachable goal [FIXED]
+    Problem : Explorer stuck in loop: Goals #1-#13 all targeting (-2.18, 0.07).
+    Cause   : CRITICAL BUG in nav_result_callback — on STATUS_ABORTED,
+              the code recorded self.robot_x, self.robot_y (robot position)
+              into failed_goals instead of the GOAL position.
+              So the frontier at (-2.18, 0.07) was never blacklisted.
+    Fix     : Added self.current_goal_x/y, set before sending goal.
+              On abort, record current_goal_x/y (not robot position).
+
+  BUG 6 — Planner "Failed to create plan" for all frontier goals [FIXED]
+    Problem : NavFn planner fails for every frontier goal with
+              "Failed to create plan with tolerance of: 0.500000"
+    Cause   : Frontier centroids land exactly at the free/unknown boundary.
+              These cells are often in or adjacent to the inflated obstacle
+              zone in the global costmap. NavFn couldn't find a path there.
+    Fix 1   : Increased planner tolerance from 0.50 → 1.0 (nav2_params.yaml)
+    Fix 2   : Goal nudging in explorer: move goal 0.3m toward robot so it
+              lands in confirmed free space, not at the frontier edge.
+
+  BUG 7 — TF extrapolation errors [FIXED]
+    Problem : "Lookup would require extrapolation into the past.
+              Requested time 1250.595 but earliest data at 1250.600"
+    Cause   : controller_server and behavior_server had transform_tolerance:0.5
+              With sim_time and network latency, TF timestamps occasionally
+              fall slightly behind.
+    Fix     : Increased transform_tolerance from 0.5 → 1.0 in both
+              controller_server (FollowPath) and behavior_server sections.
+
+--------------------------------------------------------------------------------
+  13. KNOWN ISSUES & LIMITATIONS
+--------------------------------------------------------------------------------
+
+  ISSUE 1 — SLAM requires manual lifecycle activation after every restart
+    Impact  : Cannot fully automate startup without the helper script.
+    Workaround: Use /tmp/start_smart.sh for automated startup.
+    Proper fix: Patch slam_toolbox or add lifecycle_manager for SLAM too.
+
+  ISSUE 2 — Multiple SLAM instances accumulate across restarts
+    Impact  : After multiple restarts, stale slam_toolbox processes remain.
+    Cause   : Nav2 launch file starts its own SLAM node (in addition to
+              the manually started one).
+    Workaround: Kill all slam_toolbox processes before restart.
+    Proper fix: Remove SLAM from navigation_launch.py, manage separately.
+
+  ISSUE 3 — Multiple RViz instances launch
+    Impact  : Memory usage, visual confusion.
+    Cause   : Multiple launch files each start RViz.
+    Workaround: Kill extra RViz processes manually.
+
+  ISSUE 4 — Goals still occasionally abort near walls
+    Impact  : Requires a few retries before finding a navigable goal.
+    Cause   : Even with 0.3m nudging, some frontiers are in narrow passages
+              where the inflated costmap blocks planning.
+    Status  : Functional — blacklist handles it, moves to next frontier.
+
+  ISSUE 5 — Exploration does not use a proper "already explored" check
+    Impact  : Robot may revisit areas that have been mapped.
+    Cause   : Frontier algorithm only cares about current unknown cells.
+              It doesn't track "already visited" regions separately.
+    Improvement: Add visited waypoints set to avoid backtracking.
+
+  ISSUE 6 — No timeout on individual navigation goals
+    Impact  : If Nav2 accepts a goal but never completes it,
+              the explorer waits indefinitely.
+    Cause   : goal_timeout parameter exists but relies on Nav2's internal
+              progress_checker (movement_time_allowance: 10s).
+    Status  : Nav2's progress_checker fires every 10s and aborts → OK.
+
+--------------------------------------------------------------------------------
+  14. NEXT STEPS / TODO
+--------------------------------------------------------------------------------
+
+  PRIORITY 1 — STABILITY (Complete these first)
+  -----------------------------------------------
+  [ ] Fix SLAM dual-instance issue:
+        Remove SLAM node from navigation_launch.py.
+        Let start_smart.sh manage SLAM lifecycle exclusively.
+        Ensures only ONE slam_toolbox process ever runs.
+
+  [ ] Add SLAM auto-lifecycle activation:
+        Write a small ROS2 node that waits for /clock, then calls
+        SLAM lifecycle transitions automatically.
+        Eliminates need for manual ros2 lifecycle set commands.
+
+  [ ] Unify RViz launch:
+        Remove RViz from navigation_launch.py.
+        Start RViz once from gazebo_launch.py or a dedicated rviz_launch.py.
+
+  PRIORITY 2 — EXPLORATION QUALITY
+  -----------------------------------
+  [ ] Improve frontier scoring:
+        Currently uses score = size / distance.
+        Consider: penalize frontiers near previously failed goals.
+        Consider: prefer frontiers that expand the map boundary (not holes).
+
+  [ ] Add "exploration complete" timeout fallback:
+        If no new frontiers are found for 60+ seconds and frontier count
+        is low, trigger map saving automatically.
+
+  [ ] Better goal feasibility check before sending:
+        Sample the global costmap at the goal point before sending to Nav2.
+        If cell value > 253 (lethal obstacle), skip immediately.
+        This avoids the planner failure cycle entirely.
+
+  [ ] Add visited zones memory:
+        Keep a set of (x, y) positions the robot has reached successfully.
+        When no new frontiers, try to reach unvisited areas with lower priority.
+
+  PRIORITY 3 — REAL ROBOT INTEGRATION
+  -------------------------------------
+  [ ] Test ESP32 firmware with real hardware:
+        Flash main.cpp to ESP32 board.
+        Verify motor PWM response to /cmd_vel.
+        Verify /odom odometry accuracy over 1m travel.
+        Calibrate wheel_radius and wheel_separation parameters.
+
+  [ ] Add motor PID control in firmware:
+        Current firmware uses open-loop PWM.
+        Add encoder-based PID for velocity control.
+        Improves odometry accuracy and straight-line tracking.
+
+  [ ] Add battery voltage monitoring:
+        Read ADC for battery voltage.
+        Publish as /battery_voltage (std_msgs/Float32).
+        Add low-battery stop in explorer.
+
+  [ ] Test use_sim_time: false:
+        Switch all params to use_sim_time: false for real robot.
+        Verify SLAM works with real LiDAR (LD19 or similar).
+        Verify Nav2 navigation on real floor.
+
+  PRIORITY 4 — FEATURES
+  ----------------------
+  [ ] Web interface for remote monitoring:
+        ROS2 web bridge (rosbridge_suite) + simple HTML/JS map viewer.
+        Show live map, robot position, frontier goals in browser.
+
+  [ ] Map saving on exploration complete:
+        In autonomous_explorer.py, when exploration_complete = True,
+        automatically call map_saver_cli to save the final map.
+
+  [ ] Multi-room support:
+        Current room.world has one room.
+        Add doors/connections, test navigation through doorways.
+
+  [ ] 3D mapping:
+        Add Intel RealSense or similar depth camera to URDF.
+        Use RTAB-Map for 3D SLAM alongside 2D Nav2.
+
+--------------------------------------------------------------------------------
+  15. GIT HISTORY
+--------------------------------------------------------------------------------
+
+  Branch  : main
+  Remote  : https://github.com/Am4l-babu/room-mapping.git
+
+  Commit 1 — 3ff4bb5  (Initial commit)
+    "Initial commit: ROS2 Jazzy room-mapping robot with Nav2 autonomous exploration"
+    Added: All source files — URDF, worlds, launch files, config, scripts,
+           ESP32 firmware, package.xml, CMakeLists.txt
+
+  Commit 2 — f83c623
+    "Fix: Migrate to Gazebo Harmonic + Nav2 Jazzy bt_navigator config"
+    Changed: gazebo_launch.py → ros_gz_bridge instead of ros2_gz_bridge
+    Changed: navigation_launch.py → Jazzy lifecycle node format
+    Changed: nav2_params.yaml → Jazzy bt_navigator plugin format
+    Changed: robot.urdf.xacro → Gazebo Harmonic sensor plugin names
+
+  Commit 3 — 8b4a50e  (HEAD → main)
+    "Fix: explorer blacklist bug, goal nudging, increased transform/planner tolerance"
+    Changed: autonomous_explorer.py
+      - Fixed failed_goals to record GOAL position (not robot position)
+      - Increased blacklist avoidance radius 0.3m → 0.5m
+      - Added goal nudging: move 0.3m toward robot before sending
+      - Smarter failed_goals clearing (expand range first, then clear half)
+    Changed: nav2_params.yaml
+      - planner tolerance: 0.50 → 1.0
+      - transform_tolerance: 0.5 → 1.0 (controller + behavior_server)
+    Changed: slam_params.yaml
+      - Added use_lifecycle_manager: false
+    Changed: navigation_launch.py
+      - Added TimerAction(5s) for Nav2 nodes
+      - Added TimerAction(15s) for lifecycle_manager
+      - Removed all respawn=True and respawn_delay=2.0
+
+--------------------------------------------------------------------------------
+  16. USEFUL COMMANDS (QUICK REFERENCE)
+--------------------------------------------------------------------------------
+
+  Setup:
+    cd "/home/ros/mapping robot/ros2_room_mapping_ws"
+    source /opt/ros/jazzy/setup.bash && source install/setup.bash
+
+  Build:
+    colcon build --packages-select room_mapping_robot
+
+  Check running nodes:
+    ros2 node list
+
+  Check topic data:
+    ros2 topic echo /odom --once
+    ros2 topic echo /map --once | head -20
+    ros2 topic hz /scan
+
+  Check Nav2 lifecycle states:
+    ros2 lifecycle get /bt_navigator
+    ros2 lifecycle get /controller_server
+    ros2 lifecycle get /planner_server
+    ros2 lifecycle get /slam_toolbox
+
+  Manually activate SLAM:
+    ros2 lifecycle set /slam_toolbox configure
+    ros2 lifecycle set /slam_toolbox activate
+
+  Watch exploration logs:
+    tail -f /tmp/explorer.log
+    tail -f /tmp/nav2.log
+    tail -f /tmp/slam.log
+
+  Save map:
+    ros2 run nav2_map_server map_saver_cli -f ~/room_map
+
+  Kill everything (clean restart):
+    pkill -f "gz sim" && pkill -f "slam_toolbox" && pkill -f "nav2" \
+    && pkill -f "autonomous_explorer" && pkill -f "rviz2"
+    ros2 daemon stop && sleep 2 && ros2 daemon start
+
+  Git push:
+    cd "/home/ros/mapping robot/ros2_room_mapping_ws"
+    git add -A && git commit -m "message" && git push origin main
+
+================================================================================
+  END OF PROJECT_STATUS.txt
+================================================================================
