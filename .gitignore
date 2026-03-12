@@ -1,0 +1,30 @@
+# ROS2 build artifacts
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# PlatformIO (ESP32 firmware)
+esp32_firmware/.pio/
+esp32_firmware/build/
+.pio/
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Editor temp files
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ROS2 generated
+*.devel/
+devel/

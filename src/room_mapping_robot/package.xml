@@ -1,0 +1,100 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<!--
+  ============================================================================
+  package.xml — ROS2 Package Manifest for room_mapping_robot
+  ============================================================================
+  
+  This file declares the package metadata, dependencies, and build type
+  for the room_mapping_robot package.
+  
+  This package provides:
+    - URDF robot model (differential drive robot)
+    - Gazebo simulation (world + plugins)
+    - SLAM Toolbox integration for room mapping
+    - Nav2 autonomous navigation and exploration
+    - Launch files to orchestrate everything
+    - RViz configuration for visualization
+  
+  Target platform: ROS2 Jazzy on Ubuntu 24.04
+  
+  Hardware this simulates:
+    - ESP32 microcontroller (replaced by Gazebo plugins in simulation)
+    - L293D motor driver + 2x DC motors (replaced by gazebo_ros_diff_drive)
+    - MPU6050 IMU (replaced by gazebo_ros_imu_sensor)
+    - Ultrasonic + servo (replaced by gazebo_ros_ray_sensor / 2D LiDAR)
+    - IR obstacle sensors (not needed in sim — LiDAR covers this)
+    - SD card module (ROS2 bag recording replaces this in sim)
+  ============================================================================
+-->
+<package format="3">
+  <name>room_mapping_robot</name>
+  <version>1.0.0</version>
+  <description>
+    Differential drive room-mapping robot simulation for ROS2 Jazzy.
+    Uses Gazebo for physics simulation, SLAM Toolbox for mapping,
+    and simulated LiDAR/IMU sensors. Designed to mirror a real
+    ESP32-based robot with L293D motor driver and MPU6050 IMU.
+  </description>
+  <maintainer email="developer@example.com">developer</maintainer>
+  <license>MIT</license>
+
+  <!-- Build tool -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Core ROS2 dependencies -->
+  <depend>rclcpp</depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+
+  <!-- Robot model -->
+  <depend>urdf</depend>
+  <depend>xacro</depend>
+  <depend>robot_state_publisher</depend>
+  <depend>joint_state_publisher</depend>
+
+  <!-- Gazebo Harmonic simulation (ros_gz — NOT classic gazebo_ros) -->
+  <depend>ros_gz_sim</depend>
+  <depend>ros_gz_bridge</depend>
+  <depend>ros_gz_interfaces</depend>
+
+  <!-- SLAM and navigation -->
+  <depend>slam_toolbox</depend>
+  <depend>nav2_map_server</depend>
+
+  <!-- Nav2 autonomous navigation stack -->
+  <depend>nav2_bringup</depend>
+  <depend>nav2_bt_navigator</depend>
+  <depend>nav2_controller</depend>
+  <depend>nav2_planner</depend>
+  <depend>nav2_behaviors</depend>
+  <depend>nav2_lifecycle_manager</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>nav2_navfn_planner</depend>
+  <depend>nav2_velocity_smoother</depend>
+  <depend>nav2_waypoint_follower</depend>
+  <depend>nav2_msgs</depend>
+  <depend>dwb_core</depend>
+  <depend>dwb_plugins</depend>
+  <depend>dwb_critics</depend>
+  <depend>navigation2</depend>
+
+  <!-- Teleoperation -->
+  <depend>teleop_twist_keyboard</depend>
+
+  <!-- Visualization -->
+  <depend>rviz2</depend>
+
+  <!-- Testing -->
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

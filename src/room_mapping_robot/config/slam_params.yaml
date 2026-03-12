@@ -1,0 +1,151 @@
+# =============================================================================
+# slam_params.yaml — SLAM Toolbox Configuration for Room Mapping
+# =============================================================================
+#
+# This file configures SLAM Toolbox (async_slam_toolbox_node) for indoor
+# room mapping with our differential drive robot.
+#
+# SLAM Toolbox uses a graph-based SLAM approach:
+#   1. Each laser scan becomes a "node" in a pose graph
+#   2. Scan matching between consecutive scans creates "edges" (constraints)
+#   3. Loop closure detection adds edges between distant nodes
+#   4. Graph optimization (Ceres solver) minimizes overall error
+#   5. The occupancy grid map is generated from the optimized graph
+#
+# KEY PARAMETERS EXPLAINED:
+#   - scan_topic: where laser data comes from (/scan from LiDAR plugin)
+#   - odom_frame: odometry frame (odom from diff_drive plugin)
+#   - map_frame: the global map frame (map)
+#   - base_frame: robot's body frame (base_footprint)
+#   - resolution: map grid cell size (0.05m = 5cm per pixel)
+#   - max_laser_range: maximum usable range (8.0m matches our LiDAR)
+#   - minimum_travel_distance: don't add new scan node unless robot moved
+#   - minimum_travel_heading: don't add new scan node unless robot rotated
+#
+# TUNING FOR SMALL ROBOTS:
+#   Our robot is small (0.18m chassis) in a 5×5m room. We use:
+#   - 0.05m resolution (good detail for room-scale mapping)
+#   - 0.3m minimum travel distance (frequent scan updates)
+#   - 0.3 rad minimum heading change (~17°)
+#   - Loop closure enabled for accurate mapping
+#
+# REAL ROBOT ADAPTATION:
+#   When switching to the real ESP32 robot:
+#   1. Set use_sim_time: false
+#   2. The /scan topic from ultrasonic sweep may be noisier
+#      → Increase minimum_travel_distance to 0.5m
+#      → Increase scan matching correlation search space
+#   3. Odometry from wheel encoders may drift more
+#      → SLAM will still correct via scan matching
+# =============================================================================
+
+slam_toolbox:
+  ros__parameters:
+    # ---- General Settings ----
+    # use_sim_time: true when using Gazebo, false for real robot
+    use_sim_time: true
+    
+    # SLAM mode: mapping (builds map) vs localization (uses existing map)
+    mode: mapping
+
+    # ---- Frame IDs ----
+    # These must match the TF tree published by our robot
+    odom_frame: odom            # Published by diff_drive plugin (odom → base_footprint)
+    map_frame: map              # Published by SLAM Toolbox (map → odom)
+    base_frame: base_footprint  # Robot's ground-level frame
+    
+    # ---- Topic Configuration ----
+    # /scan comes from the gazebo_ros_ray_sensor (LiDAR) plugin
+    scan_topic: /scan
+    
+    # Use the /scan message header for timing (recommended)
+    use_scan_matching: true
+    use_scan_barycenter: true
+    
+    # ---- Map Configuration ----
+    # Resolution: meters per pixel in the occupancy grid
+    # 0.05m = 5cm per cell (good for indoor rooms)
+    resolution: 0.05
+    
+    # Map dimensions will auto-expand as the robot explores
+    # These are initial sizes (can grow beyond these)
+    map_update_interval: 5.0
+    
+    # ---- Laser/LiDAR Settings ----
+    # Maximum laser range to use (must match sensor config in URDF)
+    max_laser_range: 8.0
+    
+    # Minimum laser range (ignore readings closer than this)
+    minimum_time_interval: 0.5
+    
+    # ---- Scan Matching Parameters ----
+    # How close the robot must travel before adding a new scan node
+    # Smaller values = more detail but slower processing
+    minimum_travel_distance: 0.3
+    minimum_travel_heading: 0.3
+    
+    # Scan matching search window
+    # Larger = more robust but slower
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    
+    # ---- Correlation Search (for scan matching) ----
+    # Fine search: precise alignment within a small window
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+    
+    # ---- Loop Closure Settings ----
+    # Loop closure corrects accumulated drift when the robot
+    # revisits a previously-mapped area
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+    loop_search_maximum_distance: 3.0
+    
+    # ---- Optimization (Ceres Solver) ----
+    # do_loop_closing: enable loop closure detection
+    do_loop_closing: true
+    
+    # Number of optimization iterations
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+    
+    # ---- Penalty Settings (prevent bad matches) ----
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    
+    # ---- Transform Settings ----
+    # How often to publish the map → odom transform
+    transform_publish_period: 0.02
+    
+    # Timeout for receiving TF transforms
+    tf_buffer_duration: 30.0
+    
+    # ---- Threading ----
+    # Number of processing threads (increase on multi-core systems)
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # ---- Map Saving/Loading ----
+    # Set these to save/load maps for re-use
+    # map_file_name: ""      # Uncomment and set path to save map
+    # map_start_pose: [0.0, 0.0, 0.0]  # Starting pose in map
+    # map_start_at_dock: true
+
+    # ---- Debug ----
+    debug_logging: false
+    throttle_scans: 1
+    enable_interactive_mode: true
+    
+    # ---- Stack Size ----
+    stack_size_to_use: 40000000

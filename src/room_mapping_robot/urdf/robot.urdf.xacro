@@ -1,0 +1,536 @@
+<?xml version="1.0"?>
+<!--
+  ============================================================================
+  robot.urdf.xacro — Differential Drive Room-Mapping Robot Model
+  ============================================================================
+  
+  This URDF (Xacro) file defines the complete robot model for simulation.
+  
+  LINKS (rigid bodies):
+    - base_footprint   : ground-level reference frame (0,0,0 on floor)
+    - base_link        : robot chassis (box: 0.18m x 0.16m x 0.05m)
+    - left_wheel_link  : left drive wheel (cylinder: r=0.03m, l=0.02m)
+    - right_wheel_link : right drive wheel (cylinder: r=0.03m, l=0.02m)
+    - caster_wheel     : passive rear caster (sphere: r=0.01m)
+    - lidar_link       : 2D LiDAR mount (replaces ultrasonic+servo in sim)
+    - imu_link         : IMU sensor mount (simulates MPU6050)
+  
+  JOINTS:
+    - base_joint             : fixed, base_footprint → base_link
+    - left_wheel_joint       : continuous (revolute), base_link → left_wheel
+    - right_wheel_joint      : continuous (revolute), base_link → right_wheel
+    - caster_wheel_joint     : fixed, base_link → caster_wheel
+    - lidar_joint            : fixed, base_link → lidar_link
+    - imu_joint              : fixed, base_link → imu_link
+  
+  GAZEBO PLUGINS:
+    - gazebo_ros_diff_drive   : differential drive controller
+    - gazebo_ros_ray_sensor   : 2D LiDAR (replaces ultrasonic scanner)
+    - gazebo_ros_imu_sensor   : IMU (simulates MPU6050)
+  
+  TF TREE produced:
+    map → odom → base_footprint → base_link → {lidar_link, imu_link, wheels}
+    (map→odom is published by SLAM Toolbox)
+    (odom→base_footprint is published by diff_drive plugin)
+    (base_link→children published by robot_state_publisher)
+  
+  HARDWARE MAPPING (simulation ↔ real robot):
+    Simulation                  | Real Robot
+    ─────────────────────────── | ───────────────────────────
+    gazebo_ros_diff_drive       | ESP32 + L293D + 2× DC motors
+    gazebo_ros_ray_sensor       | Ultrasonic sensor on servo
+    gazebo_ros_imu_sensor       | MPU6050 IMU via I2C
+    Gazebo physics engine       | Physical world
+    /cmd_vel subscription       | ESP32 micro-ROS subscriber
+    /odom publication           | ESP32 wheel encoder odometry
+    /scan publication           | ESP32 ultrasonic sweep publisher
+    /imu publication            | ESP32 MPU6050 publisher
+  ============================================================================
+-->
+<robot name="room_mapping_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ================================================================== -->
+  <!-- XACRO PROPERTIES (constants used throughout the model)              -->
+  <!-- ================================================================== -->
+  
+  <!-- Chassis dimensions (meters) -->
+  <xacro:property name="chassis_length" value="0.18"/>
+  <xacro:property name="chassis_width"  value="0.14"/>
+  <xacro:property name="chassis_height" value="0.05"/>
+  <xacro:property name="chassis_mass"   value="0.8"/>
+  
+  <!-- Wheel dimensions -->
+  <xacro:property name="wheel_radius"     value="0.03"/>
+  <xacro:property name="wheel_width"      value="0.02"/>
+  <xacro:property name="wheel_mass"       value="0.1"/>
+  <xacro:property name="wheel_separation" value="0.16"/>
+  
+  <!-- Caster wheel -->
+  <xacro:property name="caster_radius" value="0.01"/>
+  <xacro:property name="caster_mass"   value="0.05"/>
+  
+  <!-- Sensor positions -->
+  <xacro:property name="lidar_height" value="0.04"/>
+  <xacro:property name="lidar_radius" value="0.03"/>
+  
+
+  <!-- ================================================================== -->
+  <!-- MATERIAL DEFINITIONS (colors for RViz visualization)                -->
+  <!-- ================================================================== -->
+  
+  <material name="blue">
+    <color rgba="0.0 0.0 0.8 1.0"/>
+  </material>
+  <material name="black">
+    <color rgba="0.0 0.0 0.0 1.0"/>
+  </material>
+  <material name="white">
+    <color rgba="1.0 1.0 1.0 1.0"/>
+  </material>
+  <material name="red">
+    <color rgba="0.8 0.0 0.0 1.0"/>
+  </material>
+  <material name="green">
+    <color rgba="0.0 0.8 0.0 1.0"/>
+  </material>
+  <material name="grey">
+    <color rgba="0.5 0.5 0.5 1.0"/>
+  </material>
+
+
+  <!-- ================================================================== -->
+  <!-- INERTIA MACROS                                                      -->
+  <!-- These simplify inertia definitions for common shapes                -->
+  <!-- ================================================================== -->
+  
+  <!-- Box inertia: used for chassis -->
+  <xacro:macro name="box_inertia" params="m w h d">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${(m/12.0)*(h*h+d*d)}" ixy="0.0" ixz="0.0"
+               iyy="${(m/12.0)*(w*w+d*d)}" iyz="0.0"
+               izz="${(m/12.0)*(w*w+h*h)}"/>
+    </inertial>
+  </xacro:macro>
+  
+  <!-- Cylinder inertia: used for wheels and LiDAR -->
+  <xacro:macro name="cylinder_inertia" params="m r h">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${(m/12.0)*(3*r*r+h*h)}" ixy="0.0" ixz="0.0"
+               iyy="${(m/12.0)*(3*r*r+h*h)}" iyz="0.0"
+               izz="${(m/2.0)*(r*r)}"/>
+    </inertial>
+  </xacro:macro>
+  
+  <!-- Sphere inertia: used for caster wheel -->
+  <xacro:macro name="sphere_inertia" params="m r">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${(2.0/5.0)*m*r*r}" ixy="0.0" ixz="0.0"
+               iyy="${(2.0/5.0)*m*r*r}" iyz="0.0"
+               izz="${(2.0/5.0)*m*r*r}"/>
+    </inertial>
+  </xacro:macro>
+
+
+  <!-- ================================================================== -->
+  <!-- WHEEL MACRO (reused for left and right wheels)                      -->
+  <!-- ================================================================== -->
+  
+  <xacro:macro name="wheel" params="prefix y_offset">
+    <link name="${prefix}_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+      </collision>
+      <xacro:cylinder_inertia m="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}"/>
+    </link>
+    
+    <!-- Continuous joint allows infinite rotation (like a real wheel) -->
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${prefix}_wheel_link"/>
+      <!-- Wheels are at the sides of the chassis, at ground level -->
+      <origin xyz="0.0 ${y_offset} 0.0" rpy="0 0 0"/>
+      <!-- Rotation axis is Y (wheels spin around the Y axis) -->
+      <axis xyz="0 1 0"/>
+      <dynamics damping="0.01" friction="0.1"/>
+    </joint>
+    
+    <!-- Gazebo-specific wheel properties for realistic friction -->
+    <gazebo reference="${prefix}_wheel_link">
+      <material>Gazebo/DarkGrey</material>
+      <mu1>1.0</mu1>
+      <mu2>1.0</mu2>
+      <kp>1000000.0</kp>
+      <kd>100.0</kd>
+      <minDepth>0.001</minDepth>
+    </gazebo>
+  </xacro:macro>
+
+
+  <!-- ================================================================== -->
+  <!-- BASE FOOTPRINT (ground reference frame)                             -->
+  <!-- ================================================================== -->
+  <!--
+    base_footprint sits on the ground plane (z=0).
+    This is the frame that odometry references.
+    The actual robot body (base_link) is raised above it.
+  -->
+  
+  <link name="base_footprint"/>
+
+
+  <!-- ================================================================== -->
+  <!-- BASE LINK (robot chassis)                                           -->
+  <!-- ================================================================== -->
+  <!--
+    The main body of the robot. In the real robot, this is the chassis
+    that holds the ESP32, L293D motor driver, battery, etc.
+    Represented as a simple box for simulation simplicity.
+  -->
+  
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+      <material name="blue"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="${chassis_mass}" w="${chassis_width}" h="${chassis_height}" d="${chassis_length}"/>
+  </link>
+  
+  <!-- Fixed joint: base_footprint → base_link (raise chassis to wheel height) -->
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <!-- Raise base_link so wheels touch the ground -->
+    <origin xyz="0.0 0.0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+  
+  <gazebo reference="base_link">
+    <material>Gazebo/Blue</material>
+  </gazebo>
+
+
+  <!-- ================================================================== -->
+  <!-- DRIVE WHEELS (left and right)                                       -->
+  <!-- ================================================================== -->
+  <!--
+    These represent the two DC motors driven by the L293D motor driver.
+    In the real robot: ESP32 → L293D → DC motor → wheel
+    In simulation: gazebo_ros_diff_drive plugin controls these joints
+  -->
+  
+  <!-- Left wheel: +Y side of robot -->
+  <xacro:wheel prefix="left" y_offset="${wheel_separation/2}"/>
+  
+  <!-- Right wheel: -Y side of robot -->
+  <xacro:wheel prefix="right" y_offset="${-wheel_separation/2}"/>
+
+
+  <!-- ================================================================== -->
+  <!-- CASTER WHEEL (passive support wheel)                                -->
+  <!-- ================================================================== -->
+  <!--
+    A small sphere at the rear of the robot that provides stability.
+    It has near-zero friction so it doesn't affect differential drive.
+    On the real robot, this is a ball caster or furniture glide.
+  -->
+  
+  <link name="caster_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+    </collision>
+    <xacro:sphere_inertia m="${caster_mass}" r="${caster_radius}"/>
+  </link>
+  
+  <joint name="caster_wheel_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="caster_wheel"/>
+    <!-- Caster at rear of robot, lowered to touch ground -->
+    <origin xyz="${-chassis_length/2 + caster_radius} 0 ${-wheel_radius + caster_radius}" rpy="0 0 0"/>
+  </joint>
+  
+  <!-- Near-zero friction so caster slides freely -->
+  <gazebo reference="caster_wheel">
+    <material>Gazebo/Grey</material>
+    <mu1>0.001</mu1>
+    <mu2>0.001</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.001</minDepth>
+  </gazebo>
+
+
+  <!-- ================================================================== -->
+  <!-- LIDAR LINK (2D laser scanner)                                       -->
+  <!-- ================================================================== -->
+  <!--
+    In simulation: 2D LiDAR using gazebo_ros_ray_sensor
+    On real robot: Ultrasonic sensor (HC-SR04) mounted on a servo motor
+                   that sweeps 180° to create a distance scan
+    
+    We use LiDAR in simulation because:
+    1. Ultrasonic sensors are difficult to simulate accurately
+    2. LiDAR provides the same /scan topic format (sensor_msgs/LaserScan)
+    3. The real robot's ultrasonic sweep can publish the same message type
+    4. SLAM Toolbox works identically with both data sources
+    
+    The /scan topic interface is the bridge between simulation and real robot.
+  -->
+  
+  <link name="lidar_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${lidar_radius}" length="${lidar_height}"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${lidar_radius}" length="${lidar_height}"/>
+      </geometry>
+    </collision>
+    <xacro:cylinder_inertia m="0.1" r="${lidar_radius}" h="${lidar_height}"/>
+  </link>
+  
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <!-- LiDAR mounted on top of chassis, toward the front -->
+    <origin xyz="${chassis_length/4} 0 ${chassis_height/2 + lidar_height/2}" rpy="0 0 0"/>
+  </joint>
+  
+  <gazebo reference="lidar_link">
+    <material>Gazebo/Red</material>
+  </gazebo>
+
+
+  <!-- ================================================================== -->
+  <!-- IMU LINK (Inertial Measurement Unit)                                -->
+  <!-- ================================================================== -->
+  <!--
+    In simulation: gazebo_ros_imu_sensor plugin
+    On real robot: MPU6050 6-axis IMU connected via I2C to ESP32
+    
+    The IMU provides orientation and angular velocity data.
+    Published on /imu topic (sensor_msgs/Imu).
+    
+    This helps SLAM Toolbox with orientation estimation and
+    improves odometry accuracy when combined with wheel encoders.
+  -->
+  
+  <link name="imu_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.02 0.005"/>
+      </geometry>
+      <material name="green"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.02 0.005"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="0.01" w="0.02" h="0.005" d="0.02"/>
+  </link>
+  
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <!-- IMU mounted at center of chassis, on top -->
+    <origin xyz="0 0 ${chassis_height/2 + 0.0025}" rpy="0 0 0"/>
+  </joint>
+  
+  <gazebo reference="imu_link">
+    <material>Gazebo/Green</material>
+  </gazebo>
+
+
+  <!--
+    GAZEBO PLUGIN: Differential Drive Controller (Gazebo Harmonic)
+    ================================================================
+    gz-sim-diff-drive-system replaces libgazebo_ros_diff_drive.so.
+    Subscribes to /cmd_vel (gz topic), publishes /odom and /tf.
+    ros_gz_bridge in the launch file converts these to ROS2 topics.
+  -->
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system"
+            name="gz::sim::systems::DiffDrive">
+      <!-- Wheel joints (must match joint names above) -->
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+
+      <!-- Wheel geometry (must match URDF dimensions) -->
+      <wheel_separation>${wheel_separation}</wheel_separation>
+      <wheel_radius>${wheel_radius}</wheel_radius>
+
+      <!-- Odometry publish rate -->
+      <odom_publish_frequency>50</odom_publish_frequency>
+
+      <!-- Gz topic names (absolute paths to avoid model-scoping) -->
+      <topic>/cmd_vel</topic>
+      <odom_topic>/odom</odom_topic>
+      <tf_topic>/tf</tf_topic>
+
+      <!-- TF frame configuration -->
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+
+      <!-- Velocity limits -->
+      <min_velocity>-0.5</min_velocity>
+      <max_velocity>0.5</max_velocity>
+      <min_acceleration>-1.0</min_acceleration>
+      <max_acceleration>1.0</max_acceleration>
+    </plugin>
+  </gazebo>
+
+  <!--
+    GAZEBO PLUGIN: Joint State Publisher (Gazebo Harmonic)
+    ======================================================
+    Publishes wheel joint states to /joint_states gz topic.
+    Bridged to ROS2 /joint_states by ros_gz_bridge.
+  -->
+  <gazebo>
+    <plugin filename="gz-sim-joint-state-publisher-system"
+            name="gz::sim::systems::JointStatePublisher">
+      <topic>/joint_states</topic>
+      <joint_name>left_wheel_joint</joint_name>
+      <joint_name>right_wheel_joint</joint_name>
+    </plugin>
+  </gazebo>
+
+
+  <!--
+    GAZEBO SENSOR: 2D LiDAR (Gazebo Harmonic gpu_lidar)
+    =====================================================
+    Uses the gpu_lidar sensor type — no separate plugin needed.
+    Gazebo Harmonic's gz-sim-sensors-system handles publishing.
+    The ros_gz_bridge in the launch file converts /scan from
+    gz.msgs.LaserScan → sensor_msgs/msg/LaserScan for SLAM Toolbox.
+  -->
+  <gazebo reference="lidar_link">
+    <sensor name="lidar_sensor" type="gpu_lidar">
+      <update_rate>10</update_rate>
+      <!-- Absolute gz topic name — bridged to ROS2 /scan -->
+      <topic>/scan</topic>
+      <gz_frame_id>lidar_link</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.10</min>
+          <max>8.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.005</stddev>
+        </noise>
+      </lidar>
+      <always_on>true</always_on>
+      <visualize>true</visualize>
+    </sensor>
+  </gazebo>
+
+
+  <!--
+    GAZEBO SENSOR: IMU (Gazebo Harmonic)
+    =====================================
+    Uses native Harmonic imu sensor type.
+    gz-sim-imu-system (loaded in world) handles sensor publishing.
+    ros_gz_bridge converts /imu from gz.msgs.IMU → sensor_msgs/Imu.
+  -->
+  <gazebo reference="imu_link">
+    <sensor name="imu_sensor" type="imu">
+      <update_rate>100</update_rate>
+      <!-- Absolute gz topic name — bridged to ROS2 /imu -->
+      <topic>/imu</topic>
+      <gz_frame_id>imu_link</gz_frame_id>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <imu>
+        <angular_velocity>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.0002</stddev>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.0002</stddev>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.0002</stddev>
+            </noise>
+          </z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.017</stddev>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.017</stddev>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.017</stddev>
+            </noise>
+          </z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+</robot>

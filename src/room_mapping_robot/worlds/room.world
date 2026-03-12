@@ -1,0 +1,425 @@
+<?xml version="1.0" ?>
+<!--
+  ============================================================================
+  room.world — Gazebo Indoor Room Environment for SLAM Testing
+  ============================================================================
+  
+  This SDF world file defines a simulated indoor room that the robot will
+  map using SLAM Toolbox.
+  
+  Environment layout:
+    - 5m × 5m square room with 0.2m thick walls (2.0m high)
+    - Multiple obstacles placed inside:
+      * Boxes (simulating furniture like tables, shelves)
+      * Cylinders (simulating pillars, trash cans, plant pots)
+    - Standard physics with gravity and ground plane
+    - Sun light source for visibility
+  
+  The room size and obstacles are chosen to be:
+    - Large enough for the robot to navigate (5×5m for 0.18m robot)
+    - Complex enough to create an interesting map
+    - Simple enough for SLAM to converge quickly
+  
+  SLAM testing tips:
+    - Drive the robot along walls first (loop closure helps accuracy)
+    - Make sure the robot sees each obstacle from multiple angles
+    - Avoid very fast rotations (can confuse scan matching)
+  ============================================================================
+-->
+<sdf version="1.9">
+  <world name="mapping_room">
+
+    <!-- ============================================================== -->
+    <!-- GAZEBO HARMONIC SYSTEM PLUGINS (required for gz-sim 8.x)       -->
+    <!-- ============================================================== -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-contact-system"
+            name="gz::sim::systems::Contact"/>
+    <!-- Sensors system: needed for gpu_lidar and imu sensors to work -->
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <!-- IMU system: required for IMU sensor plugin -->
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
+
+    <!-- ============================================================== -->
+    <!-- PHYSICS ENGINE CONFIGURATION                                    -->
+    <!-- ============================================================== -->
+    <physics name="default_physics" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <!-- ============================================================== -->
+    <!-- LIGHTING                                                        -->
+    <!-- ============================================================== -->
+
+    <!-- Directional sun light (inline — model://sun not available in Harmonic) -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- ============================================================== -->
+    <!-- GROUND PLANE (inline — model://ground_plane not in Harmonic)   -->
+    <!-- ============================================================== -->
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================== -->
+    <!-- ROOM WALLS                                                      -->
+    <!-- The room is 5m × 5m with 0.2m thick, 2.0m high walls          -->
+    <!-- Walls are positioned so the interior is centered at (2.5, 2.5) -->
+    <!-- ============================================================== -->
+    
+    <!-- North Wall (along X axis, at Y=5.0) -->
+    <model name="north_wall">
+      <static>true</static>
+      <pose>2.5 5.1 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.4 0.2 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.4 0.2 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.7 1</ambient>
+            <diffuse>0.8 0.8 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- South Wall (along X axis, at Y=0.0) -->
+    <model name="south_wall">
+      <static>true</static>
+      <pose>2.5 -0.1 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>5.4 0.2 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>5.4 0.2 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.7 1</ambient>
+            <diffuse>0.8 0.8 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- East Wall (along Y axis, at X=5.0) -->
+    <model name="east_wall">
+      <static>true</static>
+      <pose>5.1 2.5 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.2 5.0 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.2 5.0 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.7 1</ambient>
+            <diffuse>0.8 0.8 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- West Wall (along Y axis, at X=0.0) -->
+    <model name="west_wall">
+      <static>true</static>
+      <pose>-0.1 2.5 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.2 5.0 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.2 5.0 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.7 1</ambient>
+            <diffuse>0.8 0.8 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================== -->
+    <!-- OBSTACLES — Boxes (simulating furniture)                        -->
+    <!-- ============================================================== -->
+    
+    <!-- Large box — simulates a table or shelf (top-right area) -->
+    <model name="box_obstacle_1">
+      <static>true</static>
+      <pose>3.8 3.8 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.6 0.6 0.6</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.6 0.6 0.6</size></box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.3 0.1 1</ambient>
+            <diffuse>0.6 0.3 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Medium box — simulates a storage box (bottom-left area) -->
+    <model name="box_obstacle_2">
+      <static>true</static>
+      <pose>1.0 1.2 0.2 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.4 0.8 0.4</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.4 0.8 0.4</size></box>
+          </geometry>
+          <material>
+            <ambient>0.2 0.5 0.2 1</ambient>
+            <diffuse>0.2 0.5 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Small box — simulates a small piece of furniture (center-right) -->
+    <model name="box_obstacle_3">
+      <static>true</static>
+      <pose>4.0 2.0 0.15 0 0 0.3</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.3 0.3 0.3</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.3 0.3 0.3</size></box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.2 0.2 1</ambient>
+            <diffuse>0.7 0.2 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- L-shaped obstacle — two boxes forming an L (center area) -->
+    <model name="l_shape_part1">
+      <static>true</static>
+      <pose>2.5 3.0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.0 0.2 0.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.0 0.2 0.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.4 0.4 0.6 1</ambient>
+            <diffuse>0.4 0.4 0.6 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="l_shape_part2">
+      <static>true</static>
+      <pose>2.0 3.4 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.2 0.6 0.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.2 0.6 0.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.4 0.4 0.6 1</ambient>
+            <diffuse>0.4 0.4 0.6 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================== -->
+    <!-- OBSTACLES — Cylinders (simulating pillars, trash cans, etc.)    -->
+    <!-- ============================================================== -->
+    
+    <!-- Cylinder 1 — simulates a pillar (center-left area) -->
+    <model name="cylinder_obstacle_1">
+      <static>true</static>
+      <pose>1.2 3.5 0.4 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.15</radius>
+              <length>0.8</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.15</radius>
+              <length>0.8</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Cylinder 2 — simulates a trash can (bottom-right area) -->
+    <model name="cylinder_obstacle_2">
+      <static>true</static>
+      <pose>3.5 1.0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.2</radius>
+              <length>0.5</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.2</radius>
+              <length>0.5</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.7 1</ambient>
+            <diffuse>0.3 0.3 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Cylinder 3 — small pillar near center -->
+    <model name="cylinder_obstacle_3">
+      <static>true</static>
+      <pose>2.8 1.8 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.1</radius>
+              <length>0.6</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.1</radius>
+              <length>0.6</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.3 1</ambient>
+            <diffuse>0.7 0.7 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================== -->
+    <!-- SCENE CONFIGURATION                                             -->
+    <!-- ============================================================== -->
+    
+    <scene>
+      <ambient>0.6 0.6 0.6 1.0</ambient>
+      <background>0.7 0.7 0.7 1.0</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <!-- Camera viewpoint (overview of the room) -->
+    <gui fullscreen='0'>
+      <camera name='user_camera'>
+        <pose>2.5 -2.0 8.0 0.0 1.2 1.57</pose>
+        <view_controller>orbit</view_controller>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>
