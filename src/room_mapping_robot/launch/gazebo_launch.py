@@ -76,12 +76,13 @@ def generate_launch_description():
 
     # ---- Gazebo Harmonic (gz_sim.launch.py from ros_gz_sim) ----
     # -r: run simulation immediately (don't pause at startup)
+    # IMPORTANT: world_file path is single-quoted to handle spaces in path
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(ros_gz_sim_share, 'launch', 'gz_sim.launch.py')
         ),
         launch_arguments={
-            'gz_args': f'-r {world_file}',
+            'gz_args': f"-r '{world_file}'",
             'on_exit_shutdown': 'true',
         }.items(),
     )
