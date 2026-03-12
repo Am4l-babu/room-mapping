@@ -45,6 +45,11 @@ slam_toolbox:
     # use_sim_time: true when using Gazebo, false for real robot
     use_sim_time: true
     
+    # SLAM Toolbox lifecycle management:
+    # false = node manages its own lifecycle (auto-configures and activates)
+    # true = external lifecycle manager controls the node
+    use_lifecycle_manager: false
+    
     # SLAM mode: mapping (builds map) vs localization (uses existing map)
     mode: mapping
 

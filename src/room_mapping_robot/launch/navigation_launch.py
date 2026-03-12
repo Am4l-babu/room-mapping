@@ -63,6 +63,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     GroupAction,
+    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -132,8 +133,8 @@ def generate_launch_description():
         executable='controller_server',
         name='controller_server',
         output='screen',
-        respawn=True,
-        respawn_delay=2.0,
+
+
         parameters=[
             LaunchConfiguration('nav2_params_file'),
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
@@ -147,8 +148,8 @@ def generate_launch_description():
         executable='planner_server',
         name='planner_server',
         output='screen',
-        respawn=True,
-        respawn_delay=2.0,
+
+
         parameters=[
             LaunchConfiguration('nav2_params_file'),
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
@@ -162,8 +163,8 @@ def generate_launch_description():
         executable='behavior_server',
         name='behavior_server',
         output='screen',
-        respawn=True,
-        respawn_delay=2.0,
+
+
         parameters=[
             LaunchConfiguration('nav2_params_file'),
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
@@ -177,8 +178,8 @@ def generate_launch_description():
         executable='bt_navigator',
         name='bt_navigator',
         output='screen',
-        respawn=True,
-        respawn_delay=2.0,
+
+
         parameters=[
             LaunchConfiguration('nav2_params_file'),
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
@@ -192,8 +193,8 @@ def generate_launch_description():
         executable='waypoint_follower',
         name='waypoint_follower',
         output='screen',
-        respawn=True,
-        respawn_delay=2.0,
+
+
         parameters=[
             LaunchConfiguration('nav2_params_file'),
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
@@ -207,8 +208,8 @@ def generate_launch_description():
         executable='velocity_smoother',
         name='velocity_smoother',
         output='screen',
-        respawn=True,
-        respawn_delay=2.0,
+
+
         parameters=[
             LaunchConfiguration('nav2_params_file'),
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
@@ -264,17 +265,24 @@ def generate_launch_description():
         launch_rviz_arg,
         autostart_arg,
 
-        # SLAM
+        # SLAM starts immediately — needs time to initialize and publish /map
         slam_toolbox_node,
 
-        # Nav2 nodes
-        controller_server,
-        planner_server,
-        behavior_server,
-        bt_navigator,
-        waypoint_follower,
-        velocity_smoother,
-        lifecycle_manager,
+        # Nav2 nodes start after 5s (SLAM needs to be ready first)
+        TimerAction(period=5.0, actions=[
+            controller_server,
+            planner_server,
+            behavior_server,
+            bt_navigator,
+            waypoint_follower,
+            velocity_smoother,
+        ]),
+
+        # Lifecycle manager starts after 10s (after all Nav2 nodes are up + SLAM active)
+        # This ensures SLAM's map→odom TF exists before Nav2 checks for it
+        TimerAction(period=15.0, actions=[
+            lifecycle_manager,
+        ]),
 
         # Visualization
         rviz_node,

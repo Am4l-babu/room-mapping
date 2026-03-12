@@ -138,6 +138,8 @@ class AutonomousExplorer(Node):
         self.goals_reached = 0
         self.goals_failed = 0
         self.failed_goals = set()       # Track failed goal positions to avoid retrying
+        self.current_goal_x = 0.0      # Current goal coordinates (for blacklisting)
+        self.current_goal_y = 0.0
 
         # ---- Callback Group (allows concurrent callbacks) ----
         self.cb_group = ReentrantCallbackGroup()
@@ -247,9 +249,6 @@ class AutonomousExplorer(Node):
 
         if goal_x is None:
             self.get_logger().warn('No reachable frontier found, retrying...')
-            # Clear failed goals to try again
-            if len(self.failed_goals) > 5:
-                self.failed_goals.clear()
             return
 
         # Send navigation goal
@@ -399,9 +398,13 @@ class AutonomousExplorer(Node):
             if dist > self.max_goal_distance:
                 continue
 
-            # Filter out previously failed goals (within 0.3m)
-            goal_key = (round(world_x, 1), round(world_y, 1))
-            if goal_key in self.failed_goals:
+            # Filter out previously failed goals (within 0.5m radius)
+            too_close_to_failed = False
+            for (fx, fy) in self.failed_goals:
+                if math.sqrt((world_x - fx) ** 2 + (world_y - fy) ** 2) < 0.5:
+                    too_close_to_failed = True
+                    break
+            if too_close_to_failed:
                 continue
 
             # Score: prefer closer frontiers with more cells (bigger unexplored areas)
@@ -411,16 +414,34 @@ class AutonomousExplorer(Node):
             candidates.append((score, world_x, world_y, dist, len(cluster)))
 
         if not candidates:
-            # If no candidates within max distance, try increasing range
-            self.max_goal_distance = min(self.max_goal_distance + 0.5, 8.0)
-            self.get_logger().info(
-                f'Expanding search radius to {self.max_goal_distance:.1f}m'
-            )
+            # If no candidates, try expanding search radius first
+            if self.max_goal_distance < 8.0:
+                self.max_goal_distance = min(self.max_goal_distance + 0.5, 8.0)
+                self.get_logger().info(
+                    f'Expanding search radius to {self.max_goal_distance:.1f}m'
+                )
+            else:
+                # Exhausted all range, clear oldest half of failed goals to retry
+                failed_list = list(self.failed_goals)
+                self.failed_goals = set(failed_list[len(failed_list)//2:])
+                self.max_goal_distance = 3.0  # Reset range
+                self.get_logger().info(
+                    f'Cleared old failed goals ({len(self.failed_goals)} remain), resetting range'
+                )
             return None, None
 
         # Sort by score (highest first) and pick the best
         candidates.sort(key=lambda x: x[0], reverse=True)
         _, best_x, best_y, best_dist, best_size = candidates[0]
+
+        # Nudge goal 0.3m toward robot to avoid landing in unknown/wall zone
+        # Frontier centroids often sit right at the free↔unknown boundary
+        if best_dist > 0.4:
+            nudge = 0.3
+            dx = (self.robot_x - best_x) / best_dist
+            dy = (self.robot_y - best_y) / best_dist
+            best_x += dx * nudge
+            best_y += dy * nudge
 
         self.get_logger().info(
             f'Selected frontier: ({best_x:.2f}, {best_y:.2f}), '
@@ -463,6 +484,8 @@ class AutonomousExplorer(Node):
 
         self.goals_sent += 1
         self.is_navigating = True
+        self.current_goal_x = x   # Save goal for blacklisting on failure
+        self.current_goal_y = y
 
         self.get_logger().info(
             f'[Goal #{self.goals_sent}] Navigating to ({x:.2f}, {y:.2f})'
@@ -514,11 +537,12 @@ class AutonomousExplorer(Node):
         elif status == GoalStatus.STATUS_ABORTED:
             self.get_logger().warn('Goal was aborted (unreachable?)')
             self.goals_failed += 1
-            # Record this position to avoid retrying it
-            self.failed_goals.add((
-                round(self.robot_x, 1),
-                round(self.robot_y, 1),
-            ))
+            # Record the GOAL position (not robot position!) to avoid retrying it
+            self.failed_goals.add((self.current_goal_x, self.current_goal_y))
+            self.get_logger().info(
+                f'Blacklisted goal ({self.current_goal_x:.2f}, {self.current_goal_y:.2f}). '
+                f'Total blacklisted: {len(self.failed_goals)}'
+            )
         else:
             self.get_logger().warn(f'Goal ended with status: {status}')
             self.goals_failed += 1
